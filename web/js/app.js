@@ -520,23 +520,17 @@ function updateReadyButton(ready) {
 }
 
 function updateSoundStatus() {
-  var status  = Sound.getStatus();
-  var statusEl = el('sound-status');
-  var testBtn  = el('btn-test-sound');
+  var status    = Sound.getStatus();
+  var testBtn   = el('btn-test-sound');
   var enableBtn = el('btn-enable-sound');
-  if (!statusEl) { return; }
-
-  var labels = {
-    'off':              'Sound off',
-    'ready':            'Sound ready',
-    'needs-activation': 'Tap anywhere to enable sound',
-    'unavailable':      'Sound unavailable',
-  };
-  statusEl.textContent = labels[status] || status;
-  statusEl.className   = 'sound-status sound-' + status.replace('-', '');
-
-  if (testBtn)  { testBtn.disabled  = status !== 'ready'; }
-  if (enableBtn) { enableBtn.disabled = status === 'ready' || status === 'unavailable'; }
+  if (enableBtn) {
+    var on = status === 'ready';
+    enableBtn.className   = 'btn btn-sm ' + (on ? 'btn-sound-on' : 'btn-sound-off');
+    enableBtn.textContent = status === 'unavailable' ? 'Sound unavailable' : 'Enable Sound';
+    enableBtn.disabled    = status === 'unavailable';
+    enableBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  if (testBtn) { testBtn.disabled = status !== 'ready'; }
 }
 
 function renderCountdown(ms) {
@@ -638,7 +632,8 @@ function setupControls() {
 }
 
 // Browsers only start audio after a user gesture, so try now and again on the
-// first click / tap / key press anywhere in the room.
+// first click / tap / key press anywhere in the room. The Enable Sound button
+// stays red until the audio context is actually running.
 function autoEnableSound() {
   var events = ['click', 'touchend', 'keydown'];
   function attempt() {

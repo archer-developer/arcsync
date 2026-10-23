@@ -552,6 +552,7 @@ a:hover { text-decoration: underline; }
 .sound-controls {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
   flex-wrap: wrap;
   margin-top: 0.25rem;
@@ -560,23 +561,35 @@ a:hover { text-decoration: underline; }
   width: 100%;
 }
 
-.sound-status {
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  flex: 1;
-  white-space: nowrap;
+/* Red until audio is active; then a plain outlined button with a green check */
+.btn-sound-off {
+  background: var(--red);
+  color: #fff;
+  border: 1px solid var(--red);
+}
+.btn-sound-off:hover:not(:disabled) { background: var(--red-dim); }
+.btn-sound-off:not(:disabled) { animation: soundAttention 1.4s ease-in-out infinite; }
+
+@keyframes soundAttention {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); opacity: 1; }
+  50%      { box-shadow: 0 0 10px 3px rgba(239, 68, 68, 0.55); opacity: 0.75; }
 }
 
-.sound-off              { color: var(--text-muted); }
-.sound-ready            { color: var(--green); }
-.sound-needsactivation  { color: #f59e0b; }
-.sound-unavailable      { color: var(--red); }
+@media (prefers-reduced-motion: reduce) {
+  .btn-sound-off:not(:disabled) { animation: none; }
+}
 
-.sound-buttons {
-  display: flex;
-  gap: 0.4rem;
-  flex-shrink: 0;
+.btn-sound-on {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  cursor: default;
+}
+.btn-sound-on::before {
+  content: '✓';
+  color: var(--green);
+  font-size: 1rem;
+  line-height: 1;
 }
 
 .btn-sm {
