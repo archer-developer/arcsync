@@ -512,7 +512,7 @@ function renderCountdown(ms) {
   var timerEl = el('countdown-timer');
   if (timerEl) {
     timerEl.textContent = (roomState === 'LOBBY' && ms <= 0)
-      ? '--:--.---'
+      ? Timer.formatTime(START_DELAY_MS)
       : Timer.formatTime(ms);
   }
   var arc = el('countdown-arc');

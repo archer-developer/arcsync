@@ -67,14 +67,14 @@ var Timer = (function () {
     clockOffset = 0;
   }
 
-  /** Format milliseconds as MM:SS.mmm */
+  /** Format milliseconds as seconds with tenths ("10.0"); "M:SS.d" from one minute up. */
   function formatTime(ms) {
-    if (ms <= 0) { return '00:00.000'; }
-    var total = Math.floor(ms);
-    var min   = Math.floor(total / 60000);
-    var sec   = Math.floor((total % 60000) / 1000);
-    var frac  = total % 1000;
-    return pad2(min) + ':' + pad2(sec) + '.' + pad3(frac);
+    if (ms <= 0) { return '0.0'; }
+    var ds  = Math.floor(ms / 100);
+    var sec = Math.floor(ds / 10);
+    var frac = ds % 10;
+    if (sec < 60) { return sec + '.' + frac; }
+    return Math.floor(sec / 60) + ':' + pad2(sec % 60) + '.' + frac;
   }
 
   function calculateRemainingMs(startAtUnixMs) {
@@ -122,7 +122,6 @@ var Timer = (function () {
 
   // --- Helpers ---
   function pad2(n) { return n < 10 ? '0' + n : String(n); }
-  function pad3(n) { return n < 100 ? (n < 10 ? '00' + n : '0' + n) : String(n); }
 
   return {
     estimatedServerNow:    estimatedServerNow,

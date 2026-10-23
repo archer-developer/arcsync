@@ -21,27 +21,28 @@ beforeEach(function () {
 // ---- formatTime ----
 
 test('formatTime: zero', () => {
-  expect(Timer.formatTime(0)).toBe('00:00.000');
+  expect(Timer.formatTime(0)).toBe('0.0');
 });
 
 test('formatTime: negative treated as zero', () => {
-  expect(Timer.formatTime(-500)).toBe('00:00.000');
+  expect(Timer.formatTime(-500)).toBe('0.0');
 });
 
 test('formatTime: 10 seconds', () => {
-  expect(Timer.formatTime(10000)).toBe('00:10.000');
+  expect(Timer.formatTime(10000)).toBe('10.0');
+});
+
+test('formatTime: tenths precision', () => {
+  expect(Timer.formatTime(9050)).toBe('9.0');
+  expect(Timer.formatTime(9999)).toBe('9.9');
 });
 
 test('formatTime: 1 minute', () => {
-  expect(Timer.formatTime(60000)).toBe('01:00.000');
+  expect(Timer.formatTime(60000)).toBe('1:00.0');
 });
 
 test('formatTime: 1m 23s 456ms', () => {
-  expect(Timer.formatTime(60000 + 23000 + 456)).toBe('01:23.456');
-});
-
-test('formatTime: millisecond precision', () => {
-  expect(Timer.formatTime(9050)).toBe('00:09.050');
+  expect(Timer.formatTime(60000 + 23000 + 456)).toBe('1:23.4');
 });
 
 // ---- calculateRemainingMs ----
