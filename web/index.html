@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Sync Start</title>
+  <meta name="description" content="Synchronized multiplayer countdown for cooperative games.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%230a0c10'/%3E%3Crect x='2' y='6' width='6' height='20' rx='1.5' fill='%23FF4500'/%3E%3Crect x='10' y='6' width='6' height='20' rx='1.5' fill='%23FFB300'/%3E%3Crect x='18' y='6' width='6' height='20' rx='1.5' fill='%2300D4FF'/%3E%3Crect x='26' y='6' width='6' height='20' rx='1.5' fill='%238B5CF6'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/css/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ============================
+       SCREEN: Unsupported browser
+       ============================ -->
+  <div class="screen" data-screen="unsupported" id="screen-unsupported" hidden>
+    <div class="unsupported-wrap">
+      <div class="logo-stripes" aria-hidden="true"></div>
+      <span class="logo-text" style="margin-bottom:2rem">Sync Start</span>
+      <h2 class="unsupported-title">Browser not supported</h2>
+      <p class="unsupported-body">
+        Your browser is missing features required to run this app.
+        Please update to the latest version of Chrome, Firefox, Safari, Edge, or Yandex Browser.
+      </p>
+      <ul id="missing-features" class="unsupported-list"></ul>
+    </div>
+  </div>
+
+  <!-- ============================
+       SCREEN: Landing
+       ============================ -->
+  <div class="screen" data-screen="landing" id="screen-landing">
+    <div class="landing-logo">
+      <div class="logo-stripes" aria-hidden="true"></div>
+      <span class="logo-text">Sync Start</span>
+    </div>
+
+    <section class="landing-hero" aria-labelledby="hero-heading">
+      <h1 id="hero-heading">One Start<br>Together</h1>
+      <p>Synchronized countdown for cooperative games</p>
+    </section>
+
+    <div class="landing-cards">
+      <!-- Create Room -->
+      <div class="card" role="region" aria-labelledby="create-heading">
+        <p class="card-title" id="create-heading">Create a room</p>
+        <div class="input-group" style="flex-direction:column;">
+          <label for="input-host-nick" class="sr-only">Your nickname</label>
+          <input
+            class="input-field"
+            id="input-host-nick"
+            type="text"
+            placeholder="Your nickname"
+            maxlength="20"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <p class="field-error" id="host-nick-error" hidden aria-live="polite"></p>
+          <button class="btn btn-primary btn-full" id="btn-create" style="margin-top:0.5rem">
+            Create Room
+          </button>
+        </div>
+      </div>
+
+      <!-- Join Room -->
+      <div class="card" role="region" aria-labelledby="join-heading">
+        <p class="card-title" id="join-heading">Join a room</p>
+        <label for="input-join-code" class="sr-only">Room code</label>
+        <div class="input-group">
+          <input
+            class="input-field code-input"
+            id="input-join-code"
+            type="text"
+            placeholder="7F3A2B"
+            maxlength="6"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="6-character room code"
+          >
+          <button class="btn btn-outline" id="btn-join-code">Join</button>
+        </div>
+        <p class="field-error" id="join-code-error" hidden aria-live="polite"></p>
+      </div>
+    </div>
+
+    <p class="landing-footer">Sync Start · In-memory rooms disappear on server restart</p>
+  </div>
+
+  <!-- ============================
+       SCREEN: Join (enter nickname for a shared link)
+       ============================ -->
+  <div class="screen" data-screen="join" id="screen-join" hidden>
+    <div class="card join-card">
+      <div class="landing-logo" style="justify-content:center;margin-bottom:1rem">
+        <div class="logo-stripes" aria-hidden="true"></div>
+        <span class="logo-text">Sync Start</span>
+      </div>
+      <p class="card-title" style="text-align:center">Room code</p>
+      <p class="room-code-large" id="join-room-code-display">——————</p>
+
+      <label for="input-player-nick" class="sr-only">Your nickname</label>
+      <input
+        class="input-field"
+        id="input-player-nick"
+        type="text"
+        placeholder="Your nickname"
+        maxlength="20"
+        autocomplete="off"
+        spellcheck="false"
+        style="margin-bottom:0.5rem"
+      >
+      <p class="field-error" id="player-nick-error" hidden aria-live="polite"></p>
+      <button class="btn btn-primary btn-full" id="btn-join-room" style="margin-top:0.75rem">
+        Join Room
+      </button>
+    </div>
+  </div>
+
+  <!-- ============================
+       SCREEN: Room
+       ============================ -->
+  <div class="screen" data-screen="room" id="screen-room" hidden>
+
+    <!-- Header -->
+    <header class="room-header">
+      <div class="room-header-left">
+        <div class="logo-stripes logo-stripes-sm" aria-hidden="true"></div>
+        <span
+          class="room-code-badge"
+          id="room-code-display"
+          title="Room code"
+          aria-label="Room code"
+        >——————</span>
+        <span class="host-badge" id="host-badge" hidden aria-label="You are the host">HOST</span>
+      </div>
+      <div class="header-actions">
+        <span id="connection-status" data-status="connecting" aria-live="polite">Connecting…</span>
+      </div>
+    </header>
+
+    <!-- Body -->
+    <main class="room-body" id="room-body">
+
+      <!-- Countdown column -->
+      <div class="countdown-column">
+
+        <!-- SVG circle timer -->
+        <div class="countdown-wrap" role="timer" aria-label="Countdown timer" aria-live="off">
+          <svg class="countdown-svg" viewBox="0 0 280 280" aria-hidden="true">
+            <defs>
+              <linearGradient id="arcGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%"   stop-color="#8b5cf6"/>
+                <stop offset="100%" stop-color="#00d4ff"/>
+              </linearGradient>
+            </defs>
+            <circle class="countdown-track" cx="140" cy="140" r="120"/>
+            <circle class="countdown-arc"   cx="140" cy="140" r="120" id="countdown-arc"/>
+          </svg>
+          <div class="countdown-center">
+            <span class="countdown-label" id="countdown-label">Ready</span>
+            <span id="countdown-timer" aria-label="Time remaining">--:--.---</span>
+          </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls">
+          <!-- Host controls -->
+          <div id="host-controls" style="display:none">
+            <button class="btn btn-outline btn-full" id="btn-ready">
+              I'm Ready
+            </button>
+            <!-- Schedule section (lobby only) -->
+            <div id="schedule-section" class="schedule-section" style="display:none">
+              <label for="input-start-time" class="schedule-label">Start time (your local time)</label>
+              <input
+                type="datetime-local"
+                id="input-start-time"
+                class="input-field"
+                step="1"
+                aria-label="Scheduled start time"
+              >
+              <p class="field-error" id="start-time-error" hidden aria-live="polite"></p>
+              <button class="btn btn-primary btn-full" id="btn-start" disabled>
+                Schedule Start
+              </button>
+            </div>
+            <button class="btn btn-danger btn-full" id="btn-cancel" style="display:none">
+              Cancel
+            </button>
+          </div>
+
+          <!-- Player controls -->
+          <div id="player-controls" style="display:none">
+            <button class="btn btn-outline btn-full" id="btn-ready-player">
+              I'm Ready
+            </button>
+          </div>
+
+          <!-- Sound controls (all participants) -->
+          <div id="sound-controls" class="sound-controls">
+            <span id="sound-status" class="sound-status sound-off" aria-live="polite">Sound off</span>
+            <div class="sound-buttons">
+              <button class="btn btn-ghost btn-sm" id="btn-enable-sound">Enable Sound</button>
+              <button class="btn btn-ghost btn-sm" id="btn-test-sound" disabled>Test</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Participant list column -->
+      <section class="participants-section" aria-labelledby="participants-heading">
+        <div class="participants-header">
+          <h2 class="participants-title" id="participants-heading">Participants</h2>
+          <span class="all-ready" id="all-ready-indicator" aria-live="polite"></span>
+        </div>
+        <p id="clock-offset-warning" hidden aria-live="polite"></p>
+        <div id="participant-list" role="list" aria-label="Participants"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ============================
+       SCREEN: Not Found
+       ============================ -->
+  <div class="screen" data-screen="not-found" id="screen-not-found" hidden>
+    <h2>Room not found</h2>
+    <p style="color:var(--text-dim)">This room doesn't exist or has expired.</p>
+    <a href="/" class="btn btn-outline" style="margin-top:1rem">Back to home</a>
+  </div>
+
+  <!-- ============================
+       OVERLAY: GO!
+       ============================ -->
+  <div id="overlay-go" role="alert" aria-live="assertive" aria-label="GO! Start the game!" hidden>
+    <div class="go-glow" aria-hidden="true"></div>
+    <p class="go-text" aria-hidden="true">GO!</p>
+    <p class="go-subtext">Good luck!</p>
+  </div>
+
+  <!-- ============================
+       Scripts
+       ============================ -->
+  <script src="/js/timer.js"></script>
+  <script src="/js/audio.js"></script>
+  <script src="/js/socket.js"></script>
+  <script src="/js/app.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,40 @@
+/** @type {import('eslint').Linter.Config[]} */
+export default [
+  {
+    files: ['web/js/*.js'],
+    ignores: ['web/js/*.test.js'],
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: 'script',
+      globals: {
+        window:               'readonly',
+        document:             'readonly',
+        location:             'readonly',
+        sessionStorage:       'readonly',
+        navigator:            'readonly',
+        fetch:                'readonly',
+        WebSocket:            'readonly',
+        setTimeout:           'readonly',
+        clearTimeout:         'readonly',
+        setInterval:          'readonly',
+        clearInterval:        'readonly',
+        requestAnimationFrame:  'readonly',
+        cancelAnimationFrame:   'readonly',
+        performance:          'readonly',
+        module:               'readonly',
+        Timer:                'readonly',
+        Sound:                'readonly',
+        Socket:               'readonly',
+        console:              'readonly',
+        Date:                 'readonly',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['warn', { args: 'none' }],
+      'no-undef':       'error',
+      'eqeqeq':         ['error', 'always'],
+      'no-var':         'off',
+      'semi':           ['error', 'always'],
+    },
+  },
+];
