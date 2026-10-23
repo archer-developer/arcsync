@@ -90,6 +90,19 @@ func main() {
 		})
 	})
 
+	// Room existence check (lets the client tell "room is gone" from "network is down")
+	mux.HandleFunc("GET /api/rooms/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.ToUpper(r.PathValue("id"))
+		hubsMu.RLock()
+		_, ok := hubs[id]
+		hubsMu.RUnlock()
+		if !roomIDRe.MatchString(id) || !ok {
+			http.Error(w, "room not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// WebSocket endpoint
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		rawID := strings.TrimSpace(r.URL.Query().Get("room"))

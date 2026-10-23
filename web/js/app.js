@@ -58,9 +58,11 @@ function init() {
     var rid = path.slice('/room/'.length).toUpperCase();
     if (/^[A-Z0-9]{6}$/.test(rid)) {
       currentRoomID = rid;
-      showRoomJoin(rid);
+      roomExists(rid).then(function (exists) {
+        if (exists === false) { leaveMissingRoom(rid); } else { showRoomJoin(rid); }
+      });
     } else {
-      showRoomNotFound();
+      leaveMissingRoom(rid);
     }
   } else {
     showLanding();
@@ -74,9 +76,34 @@ function init() {
   });
 }
 
+// Resolves true/false, or null when the server cannot be reached.
+function roomExists(rid) {
+  return fetch('/api/rooms/' + rid, { method: 'GET', cache: 'no-store' })
+    .then(function (res) {
+      if (res.status === 404) { return false; }
+      return res.ok ? true : null;
+    })
+    .catch(function () { return null; });
+}
+
+// The room is gone: forget its stored session and go back to the first screen with an error.
+function leaveMissingRoom(rid) {
+  Socket.disconnect();
+  Timer.stopSync();
+  ['host_token_', 'nickname_', 'pid_'].forEach(function (k) { sessionStorage.removeItem(k + rid); });
+  sessionStorage.setItem('flash_error', 'Room ' + rid + ' not found or has expired.');
+  location.replace('/');
+}
+
 // ---- Landing screen ----
 function showLanding() {
   screen('landing');
+
+  var flash = sessionStorage.getItem('flash_error');
+  if (flash) {
+    sessionStorage.removeItem('flash_error');
+    showFieldError('join-code-error', flash);
+  }
 
   el('btn-create').addEventListener('click', createRoom);
 
@@ -162,6 +189,10 @@ function connectToRoom(rid, nick) {
   Socket.onDisconnected(function () {
     setStatus('disconnected');
     Timer.stopSync();
+    // A dropped or refused connection may mean the room no longer exists.
+    roomExists(rid).then(function (exists) {
+      if (exists === false) { leaveMissingRoom(rid); }
+    });
   });
 
   Socket.on('room_state',          handleRoomState);
@@ -613,8 +644,6 @@ function screen(name) {
   });
   if (name === 'room') { setupControls(); }
 }
-
-function showRoomNotFound() { screen('not-found'); }
 
 // ---- Status ----
 function setStatus(status) {

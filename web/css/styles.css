@@ -790,22 +790,6 @@ a:hover { text-decoration: underline; }
 body.overlay-active { overflow: hidden; }
 
 /* ============================================================
-   NOT FOUND SCREEN
-   ============================================================ */
-#screen-not-found {
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 2rem 1rem;
-  gap: 1rem;
-}
-
-#screen-not-found h2 {
-  font-size: 1.5rem;
-  color: var(--red);
-}
-
-/* ============================================================
    RESPONSIVE
    ============================================================ */
 @media (min-width: 640px) {
