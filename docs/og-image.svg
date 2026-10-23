@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0a0c10"/>
+  <circle cx="300" cy="120" r="420" fill="#00d4ff" opacity="0.07"/>
+  <svg x="110" y="185" width="260" height="260" viewBox="0 0 32 32"><defs><clipPath id="c"><rect width="32" height="32" rx="5"/></clipPath></defs><rect width="32" height="32" rx="5" fill="#0a0c10"/><g clip-path="url(#c)"><g transform="rotate(-55 16 16)"><rect x="-7" y="-10" width="7" height="55" fill="#1a30ff"/><rect x="0" y="-10" width="7" height="55" fill="#00ccff"/><rect x="7" y="-10" width="7" height="55" fill="#22dd44"/><rect x="14" y="-10" width="7" height="55" fill="#ffcc00"/><rect x="21" y="-10" width="24" height="55" fill="#ff2020"/></g></g></svg>
+  <text x="420" y="330" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="104" letter-spacing="4" fill="#e2e8f0">SYNC START</text>
+  <text x="424" y="400" font-family="Arial, Helvetica, sans-serif" font-size="38" fill="#00d4ff">One start together</text>
+  <text x="424" y="462" font-family="Arial, Helvetica, sans-serif" font-size="30" fill="#64748b">Synchronized countdown for cooperative games</text>
+</svg>

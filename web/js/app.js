@@ -529,7 +529,7 @@ function updateSoundStatus() {
   var labels = {
     'off':              'Sound off',
     'ready':            'Sound ready',
-    'needs-activation': 'Sound needs activation',
+    'needs-activation': 'Tap anywhere to enable sound',
     'unavailable':      'Sound unavailable',
   };
   statusEl.textContent = labels[status] || status;
@@ -634,7 +634,27 @@ function setupControls() {
     updateSoundStatus();
   });
 
-  updateSoundStatus();
+  autoEnableSound();
+}
+
+// Browsers only start audio after a user gesture, so try now and again on the
+// first click / tap / key press anywhere in the room.
+function autoEnableSound() {
+  var events = ['click', 'touchend', 'keydown'];
+  function attempt() {
+    Sound.init();
+    updateSoundStatus();
+    if (Sound.getStatus() === 'ready') { detach(); }
+  }
+  function detach() {
+    events.forEach(function (ev) { document.removeEventListener(ev, attempt, true); });
+  }
+  Sound.onStateChange(function () {
+    updateSoundStatus();
+    if (Sound.getStatus() === 'ready') { detach(); }
+  });
+  events.forEach(function (ev) { document.addEventListener(ev, attempt, true); });
+  attempt();
 }
 
 // ---- Screens ----

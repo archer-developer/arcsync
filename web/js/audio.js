@@ -5,6 +5,7 @@
 var Sound = (function () {
   var ctx = null;
   var scheduledSources = {}; // roundId → [OscillatorNode]
+  var stateCb = null;
 
   // Create a synthetic beep at a given AudioContext time.
   function createBeep(freq, startTime, duration, volume) {
@@ -72,6 +73,8 @@ var Sound = (function () {
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) { return false; }
       ctx = new AC();
+      ctx.onstatechange = function () { if (stateCb) { stateCb(); } };
+      if (ctx.state === 'suspended') { ctx.resume().catch(function () {}); }
       return true;
     } catch {
       return false;
@@ -99,8 +102,11 @@ var Sound = (function () {
     }
   }
 
+  function onStateChange(fn) { stateCb = fn; }
+
   return {
     init:          init,
+    onStateChange: onStateChange,
     test:          test,
     getStatus:     getStatus,
     scheduleRound: scheduleRound,
