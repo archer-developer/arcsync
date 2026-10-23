@@ -548,24 +548,6 @@ a:hover { text-decoration: underline; }
   width: 100%;
 }
 
-.schedule-label {
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
-/* datetime-local input inherits .input-field but needs extra tweaks */
-input[type="datetime-local"].input-field {
-  color-scheme: dark;
-  cursor: pointer;
-}
-input[type="datetime-local"].input-field::-webkit-calendar-picker-indicator {
-  filter: invert(0.7);
-  cursor: pointer;
-}
-
 /* ----- Sound controls ----- */
 .sound-controls {
   display: flex;

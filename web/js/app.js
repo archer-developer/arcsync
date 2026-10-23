@@ -11,6 +11,7 @@ var currentRoundID  = 0;
 var startAt         = 0;
 var goUntil         = 0;
 var durationMS      = 0;
+var START_DELAY_MS  = 10000; // host start = host clock now + 10 s, sent as absolute UTC ms
 var participants    = {};  // id → ParticipantView
 var hostID          = null;
 var goTimeout       = null;
@@ -330,7 +331,6 @@ function renderControls() {
     el('btn-cancel').style.display = inCountdown ? 'flex' : 'none';
     el('btn-ready').style.display  = inLobby ? 'flex' : 'none';
     if (inLobby) {
-      setDefaultStartTime();
       updateStartButton();
     }
   } else {
@@ -338,16 +338,6 @@ function renderControls() {
   }
   var me = participants[myParticipantID];
   updateReadyButton(me ? me.ready : false);
-}
-
-// Set the datetime-local input to now + 10 seconds as a convenient default.
-function setDefaultStartTime() {
-  var input = el('input-start-time');
-  if (!input || input.value) { return; } // don't overwrite a value the host already entered
-  var d    = new Date(Date.now() + 10000);
-  var pad  = function (n) { return n < 10 ? '0' + n : '' + n; };
-  input.value = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
-                'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
 }
 
 function renderParticipants() {
@@ -593,17 +583,8 @@ function setupControls() {
   if (btnReadyPlayer) { btnReadyPlayer.addEventListener('click', toggleReady); }
 
   el('btn-start').addEventListener('click', function () {
-    var input   = el('input-start-time');
-    var val     = input ? input.value : '';
-    var utcMs   = val ? new Date(val).getTime() : NaN;
-    var minLead = 3000;
-    if (isNaN(utcMs) || utcMs - Date.now() < minLead) {
-      showFieldError('start-time-error', 'Pick a time at least 3 seconds in the future');
-      return;
-    }
     clearFieldError('start-time-error');
-    if (input) { input.value = ''; } // reset so next round gets a fresh default
-    Socket.send({ type: 'start_countdown', start_at: utcMs });
+    Socket.send({ type: 'start_countdown', start_at: Date.now() + START_DELAY_MS });
   });
 
   el('btn-cancel').addEventListener('click', function () {
