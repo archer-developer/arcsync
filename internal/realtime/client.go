@@ -24,6 +24,8 @@ type Client struct {
 	done          chan struct{} // closed on unregister; send is never closed
 	participantID string        // set after join_room succeeds
 	roomID        string
+	joinedAt      time.Time
+	latencyLogged bool // first RTT measurement of this connection was logged
 }
 
 // NewClient creates an unjoined client.

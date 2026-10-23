@@ -7,11 +7,14 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"arcsync/internal/eventlog"
 	"arcsync/internal/realtime"
 	"arcsync/internal/room"
 	"arcsync/internal/syncclock"
@@ -41,7 +44,22 @@ func sameOrigin(r *http.Request) bool {
 
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
+	logDir := flag.String("log-dir", "", "directory for usage event logs (default: logs/ next to the binary)")
 	flag.Parse()
+
+	if *logDir == "" {
+		exe, err := os.Executable()
+		if err != nil {
+			log.Fatalf("locate executable: %v", err)
+		}
+		*logDir = filepath.Join(filepath.Dir(exe), "logs")
+	}
+	events, closer, err := eventlog.New(*logDir)
+	if err != nil {
+		log.Fatalf("event log: %v", err)
+	}
+	defer func() { _ = closer.Close() }()
+	events.Info("server_started", "addr", *addr)
 
 	registry := room.NewRegistry()
 	var hubsMu sync.RWMutex
@@ -78,7 +96,8 @@ func main() {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		hub := realtime.NewHub(rm, clk)
+		hub := realtime.NewHub(rm, clk, events)
+		events.Info("room_created", "room_id", rm.ID)
 		hubsMu.Lock()
 		hubs[rm.ID] = hub
 		hubsMu.Unlock()
@@ -137,6 +156,7 @@ func main() {
 	go func() {
 		for range time.Tick(time.Minute) {
 			for _, id := range registry.Sweep(room.GracePeriod, room.RoomIdleTTL) {
+				events.Info("room_removed", "room_id", id)
 				hubsMu.Lock()
 				delete(hubs, id)
 				hubsMu.Unlock()

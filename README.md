@@ -35,7 +35,7 @@ Browsers only allow audio after a user gesture. Sound is enabled automatically o
 
 ### Clock check
 
-Each participant row shows the **RTT** and the **clock offset relative to the host**. A warning appears if your clock differs from the host's by 200 ms or more.
+Each participant row shows the **RTT** and the **clock offset relative to the host**. A warning appears if your clock differs from the host's by more than 1 second.
 
 ### Reconnecting and missing rooms
 
@@ -74,10 +74,43 @@ All configuration is via command-line flags:
 | Flag    | Default | Description           |
 |---------|---------|-----------------------|
 | `-addr` | `:8080` | HTTP listen address   |
+| `-log-dir` | `logs/` next to the binary | Directory for usage event logs |
 
 Room state is **in-memory** — rooms disappear on server restart. This is by design for the MVP.
 
 Limits: up to 32 participants per room and 10,000 rooms per server. Rooms with nobody connected are removed after 10 minutes; participants who stay disconnected for 30 seconds are dropped.
+
+---
+
+## Usage logs
+
+The server appends structured events (one JSON object per line) to `logs/events-YYYY-MM-DD.log` next to the binary (one file per UTC day):
+
+| `msg`              | Fields                                                                 |
+|--------------------|------------------------------------------------------------------------|
+| `server_started`   | `addr`                                                                 |
+| `room_created`     | `room_id`                                                              |
+| `participant_joined` | `room_id`, `nickname`, `is_host`, `reconnect`, `connected`           |
+| `latency_measured` | `nickname`, `rtt_ms`, `clock_offset_ms` (first measurement per connection) |
+| `countdown_started`| `room_id`, `round_id`, `lead_ms`, `connected`, `participants[]` with each player's `rtt_ms` / `clock_offset_ms` |
+| `round_go`         | `room_id`, `round_id`, `connected`                                     |
+| `participant_left` | `nickname`, last `rtt_ms` / `clock_offset_ms`, `session_ms`            |
+| `room_removed`     | `room_id` (empty room cleaned up)                                      |
+
+Examples (with [jq](https://jqlang.github.io/jq/)):
+
+```bash
+# rooms created per day
+cat logs/events-*.log | jq -r 'select(.msg=="room_created") | .time[:10]' | sort | uniq -c
+
+# RTT of everyone who joined
+cat logs/events-*.log | jq -r 'select(.msg=="latency_measured") | [.time, .nickname, .rtt_ms] | @tsv'
+
+# players per started round
+cat logs/events-*.log | jq -r 'select(.msg=="countdown_started") | [.time, .room_id, .connected] | @tsv'
+```
+
+Client IP addresses are not logged. Files are not deleted automatically — rotate or prune old days yourself.
 
 ---
 
@@ -118,6 +151,7 @@ internal/
   room/                     Room state machine, participant management, registry
   realtime/                 WebSocket hub, client pump goroutines, message types
   syncclock/                Injectable clock interface (real + test-friendly)
+  eventlog/                 Daily-rotating JSON usage log
 web/
   index.html                Single HTML page (SPA — all screens in one file), meta tags
   css/styles.css            Dark high-tech styling, CSS variables, responsive

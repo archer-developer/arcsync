@@ -3,10 +3,12 @@ package realtime
 import (
 	"encoding/json"
 	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
+	"arcsync/internal/eventlog"
 	"arcsync/internal/room"
 	"arcsync/internal/syncclock"
 )
@@ -21,11 +23,16 @@ type Hub struct {
 
 	r     *room.Room
 	clock syncclock.Clock
+	log   *slog.Logger // usage events; never nil
 }
 
-// NewHub creates a Hub for the given room.
-func NewHub(r *room.Room, clock syncclock.Clock) *Hub {
+// NewHub creates a Hub for the given room. A nil logger disables event logging.
+func NewHub(r *room.Room, clock syncclock.Clock, logger *slog.Logger) *Hub {
+	if logger == nil {
+		logger = eventlog.Discard()
+	}
 	return &Hub{
+		log:     logger,
 		clients: make(map[*Client]bool),
 		byPID:   make(map[string]*Client),
 		r:       r,
@@ -63,6 +70,15 @@ func (h *Hub) unregister(c *Client) {
 		return
 	}
 	pv := participantView(p)
+	h.log.Info("participant_left",
+		"room_id", h.r.ID,
+		"participant_id", p.ID,
+		"nickname", p.Nickname,
+		"is_host", p.ID == h.r.HostID,
+		"rtt_ms", p.RTTMS,
+		"clock_offset_ms", offsetValue(p.ClockOffsetMS),
+		"session_ms", h.clock.Now().Sub(c.joinedAt).Milliseconds(),
+	)
 
 	if cancelled {
 		// Host disconnected during countdown — broadcast cancellation then left
@@ -157,6 +173,7 @@ func (h *Hub) handleJoin(c *Client, m JoinRoomMsg) {
 			_ = old.conn.Close() // drop the stale connection
 		}
 		p, _ := h.r.GetParticipant(pid)
+		h.logJoin(c, p, true)
 		c.sendJSON(h.roomStateMsg(p))
 		h.broadcastExcept(c, ParticipantUpdatedMsg{
 			Type:        MsgParticipantUpdated,
@@ -190,6 +207,7 @@ func (h *Hub) handleJoin(c *Client, m JoinRoomMsg) {
 	h.mu.Unlock()
 
 	joined, _ := h.r.GetParticipant(pid)
+	h.logJoin(c, joined, false)
 	c.sendJSON(h.roomStateMsg(joined))
 	h.broadcastExcept(c, ParticipantJoinedMsg{
 		Type:        MsgParticipantJoined,
@@ -232,6 +250,14 @@ func (h *Hub) handleStartCountdown(c *Client, m StartCountdownMsg) {
 		DurationMS: snap.DurationMS,
 	})
 
+	h.log.Info("countdown_started",
+		"room_id", h.r.ID,
+		"round_id", roundID,
+		"lead_ms", snap.DurationMS,
+		"connected", len(connectedLatencies(snap)),
+		"participants", connectedLatencies(snap),
+	)
+
 	// Schedule GO transition
 	delay := time.UnixMilli(startAt).Sub(h.clock.Now())
 	goTimer := h.clock.AfterFunc(delay, func() {
@@ -247,6 +273,7 @@ func (h *Hub) transitionToGo(roundID int64) {
 	}
 
 	snap := h.r.GetSnapshot()
+	h.log.Info("round_go", "room_id", h.r.ID, "round_id", roundID, "connected", len(connectedLatencies(snap)))
 	h.broadcastAll(GoMsg{
 		Type:    MsgGo,
 		RoomID:  h.r.ID,
@@ -313,6 +340,18 @@ func (h *Hub) handleTimeSync(c *Client, m TimeSyncMsg) {
 		}
 		changed = h.r.UpdateClockOffset(c.participantID, m.ClientNowUnixMs-(recvTS-oneWay)) || changed
 	}
+	if !c.latencyLogged && m.RttMs > 0 && m.RttMs <= maxPlausibleRTTMS {
+		c.latencyLogged = true
+		if p, ok := h.r.GetParticipant(c.participantID); ok {
+			h.log.Info("latency_measured",
+				"room_id", h.r.ID,
+				"participant_id", p.ID,
+				"nickname", p.Nickname,
+				"rtt_ms", p.RTTMS,
+				"clock_offset_ms", offsetValue(p.ClockOffsetMS),
+			)
+		}
+	}
 	// Only broadcast when the visible values moved noticeably; probes run every
 	// couple of seconds per client and would otherwise flood the room.
 	if changed {
@@ -324,6 +363,45 @@ func (h *Hub) handleTimeSync(c *Client, m TimeSyncMsg) {
 			})
 		}
 	}
+}
+
+// --- event logging helpers ---
+
+func (h *Hub) logJoin(c *Client, p room.Participant, reconnect bool) {
+	c.joinedAt = h.clock.Now()
+	snap := h.r.GetSnapshot()
+	h.log.Info("participant_joined",
+		"room_id", h.r.ID,
+		"participant_id", p.ID,
+		"nickname", p.Nickname,
+		"is_host", snap.HostID == p.ID,
+		"reconnect", reconnect,
+		"connected", len(connectedLatencies(snap)),
+	)
+}
+
+type participantLatency struct {
+	Nickname      string `json:"nickname"`
+	RTTMS         int64  `json:"rtt_ms"`
+	ClockOffsetMS *int64 `json:"clock_offset_ms,omitempty"`
+}
+
+// connectedLatencies lists the currently connected participants with their latency.
+func connectedLatencies(snap room.Snapshot) []participantLatency {
+	out := make([]participantLatency, 0, len(snap.Participants))
+	for _, p := range snap.Participants {
+		if p.Connected {
+			out = append(out, participantLatency{p.Nickname, p.RTTMS, p.ClockOffsetMS})
+		}
+	}
+	return out
+}
+
+func offsetValue(v *int64) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 // --- broadcast helpers ---

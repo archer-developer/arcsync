@@ -11,6 +11,7 @@ var currentRoundID  = 0;
 var startAt         = 0;
 var goUntil         = 0;
 var durationMS      = 0;
+var CLOCK_WARN_MS   = 1000;  // show the clock-skew banner from this offset
 var START_DELAY_MS  = 10000; // start = host "now" + 10 s, sent as absolute UTC ms
 var participants    = {};  // id → ParticipantView
 var hostID          = null;
@@ -491,7 +492,7 @@ function checkClockOffsetWarnings() {
   var me   = participants[myParticipantID];
   if (!hasOffset(host) || !hasOffset(me)) { warnEl.hidden = true; return; }
   var rel = Math.abs(me.clock_offset_ms - host.clock_offset_ms);
-  if (rel >= 200) {
+  if (rel > CLOCK_WARN_MS) {
     warnEl.textContent = 'Your clock may be out of sync with the host by ~' + rel + ' ms. Consider syncing your system clock.';
     warnEl.hidden = false;
   } else {

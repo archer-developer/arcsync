@@ -1,10 +1,13 @@
 package realtime
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +20,7 @@ import (
 func newTestServer(t *testing.T) (*room.Room, *httptest.Server) {
 	t.Helper()
 	r := room.New("ROOM01", "host-token")
-	hub := NewHub(r, syncclock.Real())
+	hub := NewHub(r, syncclock.Real(), nil)
 	up := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		conn, err := up.Upgrade(w, req, nil)
@@ -117,5 +120,93 @@ func TestJoin_twiceRejected(t *testing.T) {
 	b, _ := json.Marshal(e)
 	if !strings.Contains(string(b), "already_joined") {
 		t.Fatalf("unexpected error: %s", b)
+	}
+}
+
+type lockedBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuf) events() []map[string]any {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(l.b.String()), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(line), &m) == nil {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (l *lockedBuf) find(msg string) map[string]any {
+	for _, e := range l.events() {
+		if e["msg"] == msg {
+			return e
+		}
+	}
+	return nil
+}
+
+func TestEventLog_joinLatencyCountdownLeave(t *testing.T) {
+	r := room.New("ROOM01", "host-token")
+	buf := &lockedBuf{}
+	hub := NewHub(r, syncclock.Real(), slog.New(slog.NewJSONHandler(buf, nil)))
+	up := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := up.Upgrade(w, req, nil)
+		if err != nil {
+			return
+		}
+		c := NewClient(hub, conn, r.ID)
+		hub.Register(c)
+		go c.WritePump()
+		go c.ReadPump()
+	}))
+	defer srv.Close()
+
+	c := dial(t, srv)
+	_ = c.WriteJSON(map[string]any{"type": "join_room", "nickname": "Alice", "host_token": "host-token"})
+	readType(t, c, "room_state")
+
+	j := buf.find("participant_joined")
+	if j == nil || j["nickname"] != "Alice" || j["is_host"] != true || j["reconnect"] != false {
+		t.Fatalf("bad join event: %v", j)
+	}
+
+	_ = c.WriteJSON(map[string]any{"type": "time_sync", "client_send_ts": 1, "client_now_unix_ms": time.Now().UnixMilli(), "rtt_ms": 42})
+	readType(t, c, "time_sync_result")
+	_ = c.WriteJSON(map[string]any{"type": "set_ready", "ready": true})
+	readType(t, c, "participant_updated")
+	_ = c.WriteJSON(map[string]any{"type": "start_countdown", "start_at": time.Now().Add(10 * time.Second).UnixMilli()})
+	readType(t, c, "countdown_started")
+
+	if l := buf.find("latency_measured"); l == nil || l["rtt_ms"] != float64(42) || l["nickname"] != "Alice" {
+		t.Fatalf("bad latency event: %v", l)
+	}
+	cs := buf.find("countdown_started")
+	if cs == nil || cs["connected"] != float64(1) {
+		t.Fatalf("bad countdown event: %v", cs)
+	}
+	ps, _ := cs["participants"].([]any)
+	if len(ps) != 1 || ps[0].(map[string]any)["rtt_ms"] != float64(42) {
+		t.Fatalf("countdown participants missing latency: %v", cs["participants"])
+	}
+
+	_ = c.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for buf.find("participant_left") == nil && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if l := buf.find("participant_left"); l == nil || l["nickname"] != "Alice" || l["rtt_ms"] != float64(42) {
+		t.Fatalf("bad leave event: %v", l)
 	}
 }
