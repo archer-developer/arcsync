@@ -6,15 +6,20 @@ import (
 	"errors"
 	"math/big"
 	"sync"
+	"time"
 )
 
 const (
 	idChars  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	idLength = 6
+
+	// MaxRooms bounds memory use from unauthenticated room creation.
+	MaxRooms = 10000
 )
 
 var ErrRoomNotFound = errors.New("room not found")
 var ErrRoomExists = errors.New("room already exists")
+var ErrTooManyRooms = errors.New("too many rooms")
 
 // Registry maps room IDs to rooms.
 type Registry struct {
@@ -40,6 +45,10 @@ func (rg *Registry) Create() (*Room, error) {
 			return nil, err
 		}
 		rg.mu.Lock()
+		if len(rg.rooms) >= MaxRooms {
+			rg.mu.Unlock()
+			return nil, ErrTooManyRooms
+		}
 		if _, exists := rg.rooms[id]; !exists {
 			r := New(id, token)
 			rg.rooms[id] = r
@@ -69,6 +78,24 @@ func (rg *Registry) Delete(id string) {
 	delete(rg.rooms, id)
 }
 
+// Sweep purges participants disconnected for longer than grace and removes
+// rooms that have been empty for longer than idleTTL. It returns the IDs of
+// removed rooms.
+func (rg *Registry) Sweep(grace, idleTTL time.Duration) []string {
+	now := time.Now()
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	var removed []string
+	for id, r := range rg.rooms {
+		r.PurgeStale(grace)
+		if r.Expired(idleTTL, now) {
+			delete(rg.rooms, id)
+			removed = append(removed, id)
+		}
+	}
+	return removed
+}
+
 // generateID returns a 6-char cryptographically random A-Z0-9 string.
 func generateID() (string, error) {
 	b := make([]byte, idLength)
@@ -82,7 +109,7 @@ func generateID() (string, error) {
 	return string(b), nil
 }
 
-// generateToken returns a 32-byte hex token.
+// generateToken returns a 32-char hex token (128 bits of entropy).
 func generateToken() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -103,4 +130,9 @@ func generateParticipantID() (string, error) {
 // NewParticipantID is exported for use by the realtime package.
 func NewParticipantID() (string, error) {
 	return generateParticipantID()
+}
+
+// NewReconnectToken returns a secret token a participant uses to resume its session.
+func NewReconnectToken() (string, error) {
+	return generateToken()
 }

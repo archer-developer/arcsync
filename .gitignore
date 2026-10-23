@@ -1,6 +1,8 @@
 node_modules/
 dist/
-arcsync
+/arcsync
+/arcsync-linux
+.idea/
 *.exe
 *.test
 .env

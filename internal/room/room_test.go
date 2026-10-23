@@ -17,7 +17,7 @@ func addParticipant(t *testing.T, r *Room, id, nick string, host bool) {
 	if host {
 		token = r.HostToken
 	}
-	r.AddParticipant(p, token)
+	_ = r.AddParticipant(p, token)
 }
 
 // --- ValidateNickname ---
@@ -84,7 +84,7 @@ func TestAddParticipant_hostToken(t *testing.T) {
 func TestAddParticipant_wrongToken(t *testing.T) {
 	r := makeRoom()
 	p := &Participant{ID: "h1", Nickname: "Host"}
-	r.AddParticipant(p, "wrong-token")
+	_ = r.AddParticipant(p, "wrong-token")
 	if r.HostID != "" {
 		t.Fatal("wrong token should not grant host")
 	}
@@ -379,5 +379,75 @@ func TestGetSnapshot_consistency(t *testing.T) {
 	}
 	if len(snap.Participants) != 2 {
 		t.Fatalf("expected 2 participants, got %d", len(snap.Participants))
+	}
+}
+
+func TestReconnectParticipant_byToken(t *testing.T) {
+	r := New("ROOM01", "tok")
+	p := &Participant{ID: "p1", Token: "secret", Nickname: "A"}
+	_ = r.AddParticipant(p, "")
+	r.RemoveParticipant("p1")
+
+	if _, ok := r.ReconnectParticipant("p1"); ok {
+		t.Fatal("participant ID must not work as a reconnect token")
+	}
+	if _, ok := r.ReconnectParticipant(""); ok {
+		t.Fatal("empty token must not match")
+	}
+	id, ok := r.ReconnectParticipant("secret")
+	if !ok || id != "p1" {
+		t.Fatalf("reconnect by token failed: %q %v", id, ok)
+	}
+	got, _ := r.GetParticipant("p1")
+	if !got.Connected {
+		t.Error("participant should be connected after reconnect")
+	}
+}
+
+func TestAddParticipant_roomFull(t *testing.T) {
+	r := New("ROOM01", "tok")
+	for i := 0; i < MaxParticipants; i++ {
+		if err := r.AddParticipant(&Participant{ID: string(rune('a' + i)), Nickname: "n"}, ""); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := r.AddParticipant(&Participant{ID: "extra", Nickname: "n"}, ""); err != ErrRoomFull {
+		t.Fatalf("want ErrRoomFull, got %v", err)
+	}
+}
+
+func TestUpdateTiming_reportsOnlyNoticeableChanges(t *testing.T) {
+	r := New("ROOM01", "tok")
+	_ = r.AddParticipant(&Participant{ID: "p1", Nickname: "A"}, "")
+
+	if !r.UpdateClockOffset("p1", 100) {
+		t.Error("first offset measurement should count as a change")
+	}
+	if r.UpdateClockOffset("p1", 103) {
+		t.Error("3 ms offset jitter should not be reported")
+	}
+	if !r.UpdateClockOffset("p1", 150) {
+		t.Error("50 ms offset change should be reported")
+	}
+	if !r.UpdateRTT("p1", 40) {
+		t.Error("RTT 0 -> 40 should be reported")
+	}
+	if r.UpdateRTT("p1", 42) {
+		t.Error("2 ms RTT jitter should not be reported")
+	}
+}
+
+func TestExpired(t *testing.T) {
+	r := New("ROOM01", "tok")
+	now := time.Now()
+	if r.Expired(time.Minute, now) {
+		t.Error("fresh room must not be expired")
+	}
+	if !r.Expired(time.Minute, now.Add(2*time.Minute)) {
+		t.Error("idle empty room should expire")
+	}
+	_ = r.AddParticipant(&Participant{ID: "p1", Nickname: "A"}, "")
+	if r.Expired(time.Minute, now.Add(time.Hour)) {
+		t.Error("room with a connected participant must not expire")
 	}
 }

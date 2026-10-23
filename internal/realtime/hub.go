@@ -11,6 +11,8 @@ import (
 	"arcsync/internal/syncclock"
 )
 
+const maxPlausibleRTTMS = 10000
+
 // Hub manages all WebSocket clients in a single room.
 type Hub struct {
 	mu      sync.RWMutex
@@ -42,13 +44,16 @@ func (h *Hub) Register(c *Client) {
 func (h *Hub) unregister(c *Client) {
 	h.mu.Lock()
 	delete(h.clients, c)
-	if c.participantID != "" {
+	owner := c.participantID != "" && h.byPID[c.participantID] == c
+	if owner {
 		delete(h.byPID, c.participantID)
 	}
-	close(c.send)
 	h.mu.Unlock()
+	close(c.done)
 
-	if c.participantID == "" {
+	// A newer connection may already own this participant (fast reconnect);
+	// in that case the participant must stay connected.
+	if !owner {
 		return
 	}
 
@@ -129,7 +134,11 @@ func (h *Hub) handleMessage(c *Client, data []byte) {
 
 // handleJoin processes a join_room message.
 func (h *Hub) handleJoin(c *Client, m JoinRoomMsg) {
-	// Normalize nickname
+	if c.participantID != "" {
+		c.sendJSON(ErrorMsg{Type: MsgError, Code: "already_joined", Message: "already joined"})
+		return
+	}
+
 	nick := strings.TrimSpace(m.Nickname)
 	nick, err := room.ValidateNickname(nick)
 	if err != nil {
@@ -137,47 +146,51 @@ func (h *Hub) handleJoin(c *Client, m JoinRoomMsg) {
 		return
 	}
 
-	// Attempt reconnect
-	if m.ReconnectToken != "" {
-		if ok := h.r.ReconnectParticipant(m.ReconnectToken); ok {
-			c.participantID = m.ReconnectToken
-			h.mu.Lock()
-			h.byPID[c.participantID] = c
-			h.mu.Unlock()
-			c.sendJSON(h.roomStateMsg())
-			p, _ := h.r.GetParticipant(c.participantID)
-			h.broadcastExcept(c, ParticipantJoinedMsg{
-				Type:        MsgParticipantJoined,
-				RoomID:      h.r.ID,
-				Participant: participantView(p),
-			})
-			return
+	// Attempt reconnect with the secret token
+	if pid, ok := h.r.ReconnectParticipant(m.ReconnectToken); ok {
+		c.participantID = pid
+		h.mu.Lock()
+		old := h.byPID[pid]
+		h.byPID[pid] = c
+		h.mu.Unlock()
+		if old != nil && old != c {
+			_ = old.conn.Close() // drop the stale connection
 		}
-		// Reconnect failed; continue as new participant
+		p, _ := h.r.GetParticipant(pid)
+		c.sendJSON(h.roomStateMsg(p))
+		h.broadcastExcept(c, ParticipantUpdatedMsg{
+			Type:        MsgParticipantUpdated,
+			RoomID:      h.r.ID,
+			Participant: participantView(p),
+		})
+		return
 	}
+	// Reconnect failed or not requested; continue as a new participant
 
 	pid, err := room.NewParticipantID()
 	if err != nil {
 		c.sendJSON(ErrorMsg{Type: MsgError, Code: "internal", Message: "could not generate participant ID"})
 		return
 	}
-
-	p := &room.Participant{
-		ID:       pid,
-		Nickname: nick,
+	token, err := room.NewReconnectToken()
+	if err != nil {
+		c.sendJSON(ErrorMsg{Type: MsgError, Code: "internal", Message: "could not generate token"})
+		return
 	}
-	h.r.AddParticipant(p, m.HostToken)
+
+	p := &room.Participant{ID: pid, Token: token, Nickname: nick}
+	if err := h.r.AddParticipant(p, m.HostToken); err != nil {
+		c.sendJSON(ErrorMsg{Type: MsgError, Code: "room_full", Message: err.Error()})
+		return
+	}
 	c.participantID = pid
 
 	h.mu.Lock()
 	h.byPID[pid] = c
 	h.mu.Unlock()
 
-	// Send full room state to the joining client
-	c.sendJSON(h.roomStateMsg())
-
-	// Broadcast participant_joined to everyone else
 	joined, _ := h.r.GetParticipant(pid)
+	c.sendJSON(h.roomStateMsg(joined))
 	h.broadcastExcept(c, ParticipantJoinedMsg{
 		Type:        MsgParticipantJoined,
 		RoomID:      h.r.ID,
@@ -207,8 +220,8 @@ func (h *Hub) handleStartCountdown(c *Client, m StartCountdownMsg) {
 		c.sendJSON(ErrorMsg{Type: MsgError, Code: "start_failed", Message: err.Error()})
 		return
 	}
-	roundID := h.r.CurrentRoundID()
-	dur := h.r.Duration
+	snap := h.r.GetSnapshot()
+	roundID := snap.RoundID
 
 	h.broadcastAll(CountdownStartedMsg{
 		Type:       MsgCountdownStarted,
@@ -216,11 +229,11 @@ func (h *Hub) handleStartCountdown(c *Client, m StartCountdownMsg) {
 		RoundID:    roundID,
 		StartAt:    startAt,
 		GoUntil:    goUntil,
-		DurationMS: dur.Milliseconds(),
+		DurationMS: snap.DurationMS,
 	})
 
 	// Schedule GO transition
-	delay := time.Until(time.UnixMilli(startAt))
+	delay := time.UnixMilli(startAt).Sub(h.clock.Now())
 	goTimer := h.clock.AfterFunc(delay, func() {
 		h.transitionToGo(roundID)
 	})
@@ -242,7 +255,7 @@ func (h *Hub) transitionToGo(roundID int64) {
 	})
 
 	// Schedule LOBBY transition
-	delay := time.Until(time.UnixMilli(snap.GoUntil))
+	delay := time.UnixMilli(snap.GoUntil).Sub(h.clock.Now())
 	h.clock.AfterFunc(delay, func() {
 		h.transitionToLobby(roundID)
 	})
@@ -258,7 +271,7 @@ func (h *Hub) transitionToLobby(roundID int64) {
 		Type:       MsgCountdownReset,
 		RoomID:     h.r.ID,
 		RoundID:    roundID,
-		DurationMS: h.r.Duration.Milliseconds(),
+		DurationMS: h.r.GetSnapshot().DurationMS,
 	})
 }
 
@@ -278,27 +291,31 @@ func (h *Hub) handleCancelCountdown(c *Client, m CancelCountdownMsg) {
 // handleTimeSync responds to a clock-sync probe and updates RTT + clock offset.
 func (h *Hub) handleTimeSync(c *Client, m TimeSyncMsg) {
 	recvTS := h.clock.Now().UnixMilli()
-	sendTS := h.clock.Now().UnixMilli()
 	c.sendJSON(TimeSyncResultMsg{
 		Type:         MsgTimeSyncResult,
 		ClientSendTS: m.ClientSendTS,
 		ServerRecvTS: recvTS,
-		ServerSendTS: sendTS,
+		ServerSendTS: h.clock.Now().UnixMilli(),
 	})
 	if c.participantID == "" {
 		return
 	}
-	updated := false
-	if m.RttMs > 0 {
-		h.r.UpdateRTT(c.participantID, m.RttMs)
-		updated = true
+	changed := false
+	if m.RttMs > 0 && m.RttMs <= maxPlausibleRTTMS {
+		changed = h.r.UpdateRTT(c.participantID, m.RttMs) || changed
 	}
 	if m.ClientNowUnixMs > 0 {
-		// Estimate: client clock − server clock (positive = client is ahead)
-		h.r.UpdateClockOffset(c.participantID, m.ClientNowUnixMs-recvTS)
-		updated = true
+		// client clock − server clock (positive = client is ahead); the probe
+		// reached the server about half an RTT after the client stamped it.
+		oneWay := m.RttMs / 2
+		if m.RttMs <= 0 || m.RttMs > maxPlausibleRTTMS {
+			oneWay = 0
+		}
+		changed = h.r.UpdateClockOffset(c.participantID, m.ClientNowUnixMs-(recvTS-oneWay)) || changed
 	}
-	if updated {
+	// Only broadcast when the visible values moved noticeably; probes run every
+	// couple of seconds per client and would otherwise flood the room.
+	if changed {
 		if p, ok := h.r.GetParticipant(c.participantID); ok {
 			h.broadcastAll(ParticipantUpdatedMsg{
 				Type:        MsgParticipantUpdated,
@@ -352,23 +369,25 @@ func (h *Hub) broadcastExcept(exclude *Client, v any) {
 	}
 }
 
-// roomStateMsg builds a full RoomStateMsg from the current snapshot.
-func (h *Hub) roomStateMsg() RoomStateMsg {
+// roomStateMsg builds a full RoomStateMsg addressed to the participant `you`.
+func (h *Hub) roomStateMsg(you room.Participant) RoomStateMsg {
 	snap := h.r.GetSnapshot()
 	pvs := make([]ParticipantView, 0, len(snap.Participants))
 	for _, p := range snap.Participants {
 		pvs = append(pvs, participantView(*p))
 	}
 	return RoomStateMsg{
-		Type:         MsgRoomState,
-		RoomID:       snap.RoomID,
-		State:        string(snap.State),
-		HostID:       snap.HostID,
-		StartAt:      snap.StartAt,
-		GoUntil:      snap.GoUntil,
-		RoundID:      snap.RoundID,
-		DurationMS:   snap.DurationMS,
-		Participants: pvs,
+		Type:           MsgRoomState,
+		RoomID:         snap.RoomID,
+		State:          string(snap.State),
+		HostID:         snap.HostID,
+		You:            you.ID,
+		ReconnectToken: you.Token,
+		StartAt:        snap.StartAt,
+		GoUntil:        snap.GoUntil,
+		RoundID:        snap.RoundID,
+		DurationMS:     snap.DurationMS,
+		Participants:   pvs,
 	}
 }
 

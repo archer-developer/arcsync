@@ -1,6 +1,7 @@
 package room
 
 import (
+	"crypto/subtle"
 	"errors"
 	"sync"
 	"time"
@@ -14,6 +15,11 @@ const (
 	GoStateDuration     = 5 * time.Second
 	MaxNicknameLen      = 20
 	GracePeriod         = 30 * time.Second
+	MaxParticipants     = 32
+	RoomIdleTTL         = 10 * time.Minute // empty rooms are removed after this long
+
+	rttChangeThresholdMS    = 5
+	offsetChangeThresholdMS = 10
 )
 
 type State string
@@ -37,11 +43,13 @@ var (
 	ErrStartTimeTooFar      = errors.New("start time must be within 24 hours")
 	ErrHostDisconnected     = errors.New("host is disconnected")
 	ErrParticipantNotFound  = errors.New("participant not found")
+	ErrRoomFull             = errors.New("room is full")
 )
 
 // Participant is one connected user.
 type Participant struct {
 	ID             string `json:"id"`
+	Token          string `json:"-"` // secret reconnect token; never broadcast
 	Nickname       string `json:"nickname"`
 	Ready          bool   `json:"ready"`
 	RTTMS          int64  `json:"rtt_ms"`
@@ -65,6 +73,7 @@ type Room struct {
 
 	participants map[string]*Participant
 	mu           sync.RWMutex
+	lastActivity time.Time
 
 	cancelCountdown func() // cancel the active countdown goroutines
 }
@@ -77,6 +86,7 @@ func New(id, hostToken string) *Room {
 		State:        StateLobby,
 		Duration:     DefaultDuration,
 		participants: make(map[string]*Participant),
+		lastActivity: time.Now(),
 	}
 }
 
@@ -92,16 +102,22 @@ func ValidateNickname(raw string) (string, error) {
 	return raw, nil
 }
 
-// AddParticipant adds or re-activates a participant.
-// Returns ErrNotHost if hostToken is given and doesn't match.
-func (r *Room) AddParticipant(p *Participant, hostToken string) {
+// AddParticipant adds a participant. The caller becomes host when hostToken
+// matches the room's token and no host has been assigned yet.
+func (r *Room) AddParticipant(p *Participant, hostToken string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if len(r.participants) >= MaxParticipants {
+		return ErrRoomFull
+	}
 	p.Connected = true
 	r.participants[p.ID] = p
-	if hostToken != "" && hostToken == r.HostToken && r.HostID == "" {
+	r.lastActivity = time.Now()
+	if hostToken != "" && r.HostID == "" &&
+		subtle.ConstantTimeCompare([]byte(hostToken), []byte(r.HostToken)) == 1 {
 		r.HostID = p.ID
 	}
+	return nil
 }
 
 // RemoveParticipant marks a participant as disconnected.
@@ -116,6 +132,7 @@ func (r *Room) RemoveParticipant(participantID string) (cancelledRound bool) {
 	p.Connected = false
 	p.Ready = false
 	p.disconnectedAt = time.Now()
+	r.lastActivity = p.disconnectedAt
 
 	// Host disconnect during countdown → cancel
 	if participantID == r.HostID && r.State == StateCountdown {
@@ -125,17 +142,22 @@ func (r *Room) RemoveParticipant(participantID string) (cancelledRound bool) {
 	return false
 }
 
-// ReconnectParticipant marks an existing participant as connected again.
-// Returns false if not found.
-func (r *Room) ReconnectParticipant(participantID string) bool {
+// ReconnectParticipant re-activates the participant owning the secret token.
+// Returns the participant ID, or false if no participant matches.
+func (r *Room) ReconnectParticipant(token string) (string, bool) {
+	if token == "" {
+		return "", false
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	p, ok := r.participants[participantID]
-	if !ok {
-		return false
+	for id, p := range r.participants {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(p.Token)) == 1 {
+			p.Connected = true
+			r.lastActivity = time.Now()
+			return id, true
+		}
 	}
-	p.Connected = true
-	return true
+	return "", false
 }
 
 // SetReady toggles readiness for one participant.
@@ -153,23 +175,40 @@ func (r *Room) SetReady(participantID string, ready bool) error {
 	return nil
 }
 
-// UpdateRTT records a new RTT measurement for a participant.
-func (r *Room) UpdateRTT(participantID string, rttMS int64) {
+// UpdateRTT records a new RTT measurement. It reports whether the change is
+// large enough to be worth broadcasting.
+func (r *Room) UpdateRTT(participantID string, rttMS int64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if p, ok := r.participants[participantID]; ok {
-		p.RTTMS = rttMS
+	p, ok := r.participants[participantID]
+	if !ok {
+		return false
 	}
+	changed := abs64(p.RTTMS-rttMS) >= rttChangeThresholdMS
+	p.RTTMS = rttMS
+	return changed
 }
 
-// UpdateClockOffset stores the estimated UTC clock offset (client − server, in ms) for a participant.
-func (r *Room) UpdateClockOffset(participantID string, offsetMS int64) {
+// UpdateClockOffset stores the estimated UTC clock offset (client − server, in ms).
+// It reports whether the change is large enough to be worth broadcasting.
+func (r *Room) UpdateClockOffset(participantID string, offsetMS int64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if p, ok := r.participants[participantID]; ok {
-		v := offsetMS
-		p.ClockOffsetMS = &v
+	p, ok := r.participants[participantID]
+	if !ok {
+		return false
 	}
+	changed := p.ClockOffsetMS == nil || abs64(*p.ClockOffsetMS-offsetMS) >= offsetChangeThresholdMS
+	v := offsetMS
+	p.ClockOffsetMS = &v
+	return changed
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // StartCountdown attempts to move the room from LOBBY to COUNTDOWN.
@@ -347,4 +386,17 @@ func (r *Room) PurgeStale(grace time.Duration) []string {
 		}
 	}
 	return removed
+}
+
+// Expired reports whether nobody is connected and the room has been idle for
+// longer than grace.
+func (r *Room) Expired(grace time.Duration, now time.Time) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, p := range r.participants {
+		if p.Connected {
+			return false
+		}
+	}
+	return now.Sub(r.lastActivity) > grace
 }

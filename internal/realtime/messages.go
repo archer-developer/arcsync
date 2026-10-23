@@ -79,15 +79,17 @@ type ParticipantView struct {
 
 // RoomStateMsg is the authoritative full snapshot.
 type RoomStateMsg struct {
-	Type         string            `json:"type"`
-	RoomID       string            `json:"room_id"`
-	State        string            `json:"state"`
-	HostID       string            `json:"host_id"`
-	StartAt      int64             `json:"start_at"`
-	GoUntil      int64             `json:"go_until"`
-	RoundID      int64             `json:"round_id"`
-	DurationMS   int64             `json:"duration_ms"`
-	Participants []ParticipantView `json:"participants"`
+	Type           string            `json:"type"`
+	RoomID         string            `json:"room_id"`
+	State          string            `json:"state"`
+	HostID         string            `json:"host_id"`
+	You            string            `json:"you"`             // recipient's participant ID
+	ReconnectToken string            `json:"reconnect_token"` // recipient's secret resume token
+	StartAt        int64             `json:"start_at"`
+	GoUntil        int64             `json:"go_until"`
+	RoundID        int64             `json:"round_id"`
+	DurationMS     int64             `json:"duration_ms"`
+	Participants   []ParticipantView `json:"participants"`
 }
 
 // ParticipantJoinedMsg notifies the room of a new participant.

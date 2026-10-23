@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -23,7 +25,18 @@ var roomIDRe = regexp.MustCompile(`^[A-Z0-9]{6}$`)
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin:     func(*http.Request) bool { return true },
+	CheckOrigin:     sameOrigin,
+}
+
+// sameOrigin rejects cross-site WebSocket handshakes; non-browser clients
+// (no Origin header) are allowed.
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && strings.EqualFold(u.Host, r.Host)
 }
 
 func main() {
@@ -56,6 +69,10 @@ func main() {
 			return
 		}
 		rm, err := registry.Create()
+		if errors.Is(err, room.ErrTooManyRooms) {
+			http.Error(w, "too many rooms, try again later", http.StatusServiceUnavailable)
+			return
+		}
 		if err != nil {
 			log.Printf("create room: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -102,6 +119,17 @@ func main() {
 
 	// Static files
 	mux.Handle("/", fileServer)
+
+	// Drop abandoned rooms so memory does not grow without bound.
+	go func() {
+		for range time.Tick(time.Minute) {
+			for _, id := range registry.Sweep(room.GracePeriod, room.RoomIdleTTL) {
+				hubsMu.Lock()
+				delete(hubs, id)
+				hubsMu.Unlock()
+			}
+		}
+	}()
 
 	srv := &http.Server{
 		Addr:         *addr,

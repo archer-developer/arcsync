@@ -21,7 +21,8 @@ type Client struct {
 	hub           *Hub
 	conn          *websocket.Conn
 	send          chan []byte
-	participantID string // set after join_room succeeds
+	done          chan struct{} // closed on unregister; send is never closed
+	participantID string        // set after join_room succeeds
 	roomID        string
 }
 
@@ -31,6 +32,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, roomID string) *Client {
 		hub:    hub,
 		conn:   conn,
 		send:   make(chan []byte, sendBufSize),
+		done:   make(chan struct{}),
 		roomID: roomID,
 	}
 }
@@ -69,12 +71,12 @@ func (c *Client) WritePump() {
 	}()
 	for {
 		select {
-		case msg, ok := <-c.send:
+		case <-c.done:
 			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if !ok {
-				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
+			_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+			return
+		case msg := <-c.send:
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 				return
 			}

@@ -11,7 +11,7 @@ var currentRoundID  = 0;
 var startAt         = 0;
 var goUntil         = 0;
 var durationMS      = 0;
-var START_DELAY_MS  = 10000; // host start = host clock now + 10 s, sent as absolute UTC ms
+var START_DELAY_MS  = 10000; // start = host "now" + 10 s, sent as absolute UTC ms
 var participants    = {};  // id → ParticipantView
 var hostID          = null;
 var goTimeout       = null;
@@ -189,15 +189,13 @@ function handleRoomState(msg) {
   participants   = {};
   (msg.participants || []).forEach(function (p) { participants[p.id] = p; });
 
-  // Identify self by stored nickname
-  var myNick = sessionStorage.getItem('nickname_' + currentRoomID);
-  var self   = (msg.participants || []).find(function (p) { return p.nickname === myNick; });
-  if (self) {
-    myParticipantID = self.id;
-    sessionStorage.setItem('pid_' + currentRoomID, self.id);
+  // The server tells us who we are and issues a secret token for resuming.
+  myParticipantID = msg.you;
+  if (msg.reconnect_token) {
+    sessionStorage.setItem('pid_' + currentRoomID, msg.reconnect_token);
   }
 
-  isHost = myHostToken !== '' && myParticipantID !== null && msg.host_id === myParticipantID;
+  isHost = myHostToken !== '' && msg.host_id === myParticipantID;
 
   renderRoom();
   applyRoomState();
@@ -307,6 +305,8 @@ function applyRoomState() {
   } else if (roomState === 'GO') {
     showGoState();
   } else {
+    Sound.cancelRound(currentRoundID);
+    Timer.stopTimerLoop();
     setCountdownLabel('Ready');
     renderCountdown(0);
     hideGoOverlay();
@@ -355,7 +355,7 @@ function renderParticipants() {
 
   // Compute host's clock offset for relative display
   var hostOffsetMS = null;
-  if (hostID && participants[hostID] && participants[hostID].clock_offset_ms !== null) {
+  if (hostID && hasOffset(participants[hostID])) {
     hostOffsetMS = participants[hostID].clock_offset_ms;
   }
 
@@ -432,17 +432,19 @@ function renderParticipants() {
   checkClockOffsetWarnings();
 }
 
+// clock_offset_ms is omitted by the server until measured.
+function hasOffset(p) { return p && typeof p.clock_offset_ms === 'number'; }
+
 function clockOffsetText(p, hostOffsetMS) {
-  if (p.clock_offset_ms === null)    { return '—'; }
-  if (p.id === hostID)              { return 'host'; }
-  if (hostOffsetMS === null)         { return '?'; }
+  if (!hasOffset(p))         { return '—'; }
+  if (p.id === hostID)       { return 'host'; }
+  if (hostOffsetMS === null) { return '?'; }
   var rel = p.clock_offset_ms - hostOffsetMS;
-  if (rel >= 0) { return '+' + rel + ' ms'; }
-  return rel + ' ms';
+  return (rel >= 0 ? '+' : '') + rel + ' ms';
 }
 
 function clockOffsetClass(p, hostOffsetMS) {
-  if (p.clock_offset_ms === null || p.id === hostID || hostOffsetMS === null) {
+  if (!hasOffset(p) || p.id === hostID || hostOffsetMS === null) {
     return 'offset-unknown';
   }
   var abs = Math.abs(p.clock_offset_ms - hostOffsetMS);
@@ -452,14 +454,12 @@ function clockOffsetClass(p, hostOffsetMS) {
 }
 
 function checkClockOffsetWarnings() {
-  if (hostID === null || participants[hostID] === null) { return; }
-  var hostOffset = participants[hostID].clock_offset_ms;
-  if (hostOffset === null) { return; }
-  var me = participants[myParticipantID];
-  if (!me || me.clock_offset_ms === null) { return; }
-  var rel = Math.abs(me.clock_offset_ms - hostOffset);
   var warnEl = el('clock-offset-warning');
   if (!warnEl) { return; }
+  var host = hostID ? participants[hostID] : null;
+  var me   = participants[myParticipantID];
+  if (!hasOffset(host) || !hasOffset(me)) { warnEl.hidden = true; return; }
+  var rel = Math.abs(me.clock_offset_ms - host.clock_offset_ms);
   if (rel >= 200) {
     warnEl.textContent = 'Your clock may be out of sync with the host by ~' + rel + ' ms. Consider syncing your system clock.';
     warnEl.hidden = false;
@@ -584,7 +584,9 @@ function setupControls() {
 
   el('btn-start').addEventListener('click', function () {
     clearFieldError('start-time-error');
-    Socket.send({ type: 'start_countdown', start_at: Date.now() + START_DELAY_MS });
+    // Prefer the server-corrected clock so a skewed host clock cannot shift the start.
+    var now = Timer.isSynced() ? Math.round(Timer.estimatedServerNow()) : Date.now();
+    Socket.send({ type: 'start_countdown', start_at: now + START_DELAY_MS });
   });
 
   el('btn-cancel').addEventListener('click', function () {

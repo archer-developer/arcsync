@@ -3,6 +3,7 @@ package room
 import (
 	"regexp"
 	"testing"
+	"time"
 )
 
 var validIDRe = regexp.MustCompile(`^[A-Z0-9]{6}$`)
@@ -89,5 +90,25 @@ func TestNewParticipantID_format(t *testing.T) {
 		if !hexRe.MatchString(id) {
 			t.Fatalf("invalid participant ID: %q", id)
 		}
+	}
+}
+
+func TestRegistry_sweep(t *testing.T) {
+	rg := NewRegistry()
+	r, err := rg.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rg.Sweep(time.Minute, time.Minute); len(got) != 0 {
+		t.Fatalf("fresh room swept: %v", got)
+	}
+	r.mu.Lock()
+	r.lastActivity = time.Now().Add(-time.Hour)
+	r.mu.Unlock()
+	if got := rg.Sweep(time.Minute, time.Minute); len(got) != 1 || got[0] != r.ID {
+		t.Fatalf("idle room not swept: %v", got)
+	}
+	if _, err := rg.Get(r.ID); err != ErrRoomNotFound {
+		t.Fatalf("room should be gone, got %v", err)
 	}
 }
