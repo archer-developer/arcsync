@@ -260,6 +260,7 @@ function handleCountdownStarted(msg) {
   goUntil        = msg.go_until;
   durationMS     = msg.duration_ms;
   renderControls();
+  setCountdownLabel('Until start');
   renderCountdown(Timer.calculateRemainingMs(startAt));
 
   Sound.scheduleRound(startAt, currentRoundID);
